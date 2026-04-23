@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>雙福分隊排假系統</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f0f2f5; padding: 15px; text-align: center; color: #333; }
+    .card { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
+    .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin: 10px 0; }
+    .week-header { font-weight: bold; font-size: 14px; padding: 5px 0; color: #555; }
+    .week-header.weekend { color: #d32f2f; }
+    
+    /* 恢復完美正方形的排版設定 */
+    .day { background: #fff; border: 1px solid #ddd; padding: 10px 2px; border-radius: 5px; font-size: 13px; cursor: pointer; transition: 0.2s; position: relative; }
+    .day.empty { background: transparent; border: none; cursor: default; }
+    .day.full { background: #eee; color: #999; cursor: not-allowed; }
+    .day.fixed-leave { background: #ffebee !important; color: #d32f2f; border: 1px solid #ffcdd2; }
+    .day.user-booked { border: 2px solid #06C755; background: #e8f5e9; font-weight: bold; }
+    .day.selected { background: #06C755 !important; color: white !important; }
+    .day.selected-repick { background: #FFD54F !important; color: #333 !important; border: 2px solid #FF8F00 !important; font-weight: bold; }
+    
+    /* 假別文字：縮小並靠在數字旁邊，不影響高度 */
+    .leave-text { font-size: 11px; margin-left: 2px; }
+    
+    .badge { position: absolute; top: -6px; right: -6px; background: #dc3545; color: white; border-radius: 10px; padding: 1px 5px; font-size: 10px; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.2); z-index: 2; }
+    .quota { font-size: 10px; color: #666; display: block; margin-top: 3px; }
+    
+    .btn { background: #06C755; color: white; border: none; padding: 12px; border-radius: 8px; width: 100%; font-size: 16px; cursor: pointer; margin-top: 10px; font-weight: bold; }
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+    .btn-danger { background: #dc3545; margin-top: 10px; }
+    .btn-secondary { background: #6c757d; font-size: 14px; margin-top: 10px; }
+    .btn-queue { background: #17a2b8; font-size: 14px; margin-top: 10px; }
+    .id-section { background: #f8f9fa; border: 1px dashed #ced4da; padding: 15px; margin-top: 25px; border-radius: 10px; font-size: 14px; }
+    .legend { display: flex; justify-content: space-around; font-size: 12px; margin-bottom: 10px; }
+    #queueContainer { display: none; margin-top: 15px; text-align: left; background: #ffffff; border: 1px solid #ddd; padding: 15px; border-radius: 10px; font-size: 14px; max-height: 250px; overflow-y: auto; }
+    .queue-item { padding: 8px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; }
+    .status-done { color: #28a745; font-weight: bold; }
+    .status-now { color: #dc3545; font-weight: bold; }
+    .status-wait { color: #6c757d; }
+  </style>
+</head>
+<body>
+<div class="card" id="app"><h2>系統載入中... 🚒</h2></div>
+<script>
+  const LIFF_ID = "2009817007-XvETgkV8"; 
+  const GAS_API_URL = "https://script.google.com/macros/s/AKfycbzDzAU4-NLRVmjwoT07c2KkM125BNsVXypQ0reA38u448R1cYro-8pXEfV4dLHdF3hc/exec"; 
+
+  let state = { lineId: '', name: '', isMyTurn: false, selectedDate: '', targetYear: 0, targetMonth: 0, userBooked: [], fixedLeaves: {}, queueList: [] };
+
+  async function init() {
+    try {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login(); return; }
+      const profile = await liff.getProfile();
+      state.lineId = profile.userId;
+      
+      const now = new Date();
+      const nextMonthDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      state.targetYear = nextMonthDate.getFullYear();
+      state.targetMonth = nextMonthDate.getMonth() + 1;
+      
+      fetchDataAndRender();
+    } catch (e) { document.getElementById('app').innerHTML = "初始化失敗"; }
+  }
+
+  async function fetchDataAndRender() {
+    document.getElementById('app').innerHTML = `<h2>資料同步中... ⏳</h2>`;
+    const timestamp = new Date().getTime();
+    
+    const initData = await fetch(`${GAS_API_URL}?action=getInitData&lineId=${state.lineId}&year=${state.targetYear}&month=${state.targetMonth}&t=${timestamp}`).then(res => res.json());
+    
+    state.isMyTurn = initData.isMyTurn;
+    state.name = initData.myName;
+    state.userBooked = initData.userBooked;
+    state.fixedLeaves = initData.fixedLeaves; 
+    state.queueList = initData.queueList; 
+    
+    let html = `<h3>民國 ${state.targetYear - 1911} 年 ${state.targetMonth} 月 輪休表</h3><p>哈囉，${state.name || '隊員'} 👋</p>`;
+    if (!initData.sheetFound) html += `<p style="color:red;">⚠️ 找不到分頁: ${initData.sheetName}</p>`;
+    html += `<div class="legend"><span>🔴 輪休</span><span>🟢 自選</span></div>`;
+    html += `<div class="calendar-grid"><div class="week-header weekend">日</div><div class="week-header">一</div><div class="week-header">二</div><div class="week-header">三</div><div class="week-header">四</div><div class="week-header">五</div><div class="week-header weekend">六</div>`;
+    
+    const daysInMonth = new Date(state.targetYear, state.targetMonth, 0).getDate();
+    const firstDayOfWeek = new Date(state.targetYear, state.targetMonth - 1, 1).getDay();
+    for (let i = 0; i < firstDayOfWeek; i++) html += `<div class="day empty"></div>`;
+
+    for (let i = 1; i <= daysInMonth; i++) {
+      let dateStr = `${state.targetYear}-${String(state.targetMonth).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      let fixedText = state.fixedLeaves[dateStr] || ""; 
+      let myBookCount = state.userBooked.filter(d => d === dateStr).length;
+      let remain = initData.quotaMap[dateStr] || 0; 
+      let isFull = remain <= 0;
+      
+      let classList = `day ${isFull && myBookCount===0 ? 'full' : ''} ${fixedText !== "" ? 'fixed-leave' : ''} ${myBookCount > 0 ? 'user-booked' : ''}`;
+      let clickAttr = (state.isMyTurn || fixedText !== "" || myBookCount > 0) ? `onclick="selectDate(this, '${dateStr}')"` : "";
+      
+      let displayText = fixedText;
+      if (displayText === "" && myBookCount > 0) displayText = "輪";
+      let textHtml = displayText ? `<span class="leave-text">${displayText}</span>` : "";
+      let badgeHtml = myBookCount > 1 ? `<div class="badge">x${myBookCount}</div>` : "";
+      
+      html += `<div class="${classList}" ${clickAttr}>${badgeHtml}<b>${i}</b>${textHtml}<span class="quota">${isFull && myBookCount===0?'滿':'餘'+remain}</span></div>`;
+    }
+    html += `</div>`;
+    
+    if (!state.isMyTurn) html += `<p style="color:#e65100; font-size:14px; font-weight:bold; margin-top:10px;">⌛ ${initData.message}</p>`;
+    html += `<div id="actionArea"><button class="btn" disabled>請選擇日期</button></div>`;
+    html += `<div class="id-section">您的 ID: <code>${state.lineId}</code><br><button class="btn btn-secondary" onclick="copyId()">📋 複製 ID</button> <button class="btn btn-queue" onclick="toggleQueue()">👀 排假進度</button><div id="queueContainer"></div></div>`;
+    
+    document.getElementById('app').innerHTML = html;
+  }
+
+  function selectDate(el, date) {
+    document.querySelectorAll('.day').forEach(d => { d.classList.remove('selected'); d.classList.remove('selected-repick'); });
+    let isFixed = el.classList.contains('fixed-leave');
+    let isBooked = el.classList.contains('user-booked');
+    
+    if (isFixed || isBooked) el.classList.add('selected-repick');
+    else el.classList.add('selected');
+    state.selectedDate = date;
+    
+    const actionArea = document.getElementById('actionArea');
+    let btnHtml = "";
+    let isFull = el.querySelector('.quota').innerText === '滿';
+
+    if (state.isMyTurn && !isFull) {
+      btnHtml += `<button class="btn" style="background:#06C755; margin-top:10px;" onclick="submit()">➕ 確定填報此日假單</button>`;
+    }
+    if (isFixed || isBooked) {
+      btnHtml += `<button class="btn btn-danger" onclick="cancelLeave()">🗑️ 退回此假單 (釋出名額)</button>`;
+    }
+
+    if (btnHtml === "") btnHtml = `<button class="btn" disabled>此日名額已滿，無法操作</button>`;
+    actionArea.innerHTML = btnHtml;
+  }
+
+  function submit() {
+    if (!confirm(`確定要在 ${state.selectedDate} 填報假單嗎？`)) return;
+    document.getElementById('app').innerHTML = "<h2>傳送中...🚀</h2>";
+    fetch(`${GAS_API_URL}?action=submitLeave&lineId=${state.lineId}&name=${state.name}&date=${state.selectedDate}&type=輪休`)
+      .then(() => { fetchDataAndRender(); });
+  }
+
+  function cancelLeave() {
+    if (!confirm(`⚠️ 確定要退回 ${state.selectedDate} 的假嗎？\n(將釋出名額，並為您配發一次換假補填機會)`)) return;
+    document.getElementById('app').innerHTML = "<h2>退回中...🚀</h2>";
+    fetch(`${GAS_API_URL}?action=cancelLeave&lineId=${state.lineId}&name=${state.name}&date=${state.selectedDate}&year=${state.targetYear}&month=${state.targetMonth}`)
+      .then(() => { fetchDataAndRender(); });
+  }
+
+  function copyId() {
+    const el = document.createElement('textarea'); el.value = state.lineId; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el); alert("ID 已複製");
+  }
+
+  function toggleQueue() {
+    const qDiv = document.getElementById('queueContainer');
+    qDiv.style.display = (qDiv.style.display === 'block') ? 'none' : 'block';
+    if (qDiv.style.display === 'block') {
+      if(state.queueList.length === 0) { qDiv.innerHTML = "目前無排隊資料"; return; }
+      qDiv.innerHTML = state.queueList.map((item, i) => {
+        let statusClass = item.status === "已完成" ? "status-done" : (item.status === "填寫中" ? "status-now" : "status-wait");
+        let icon = item.status === "已完成" ? "✅" : (item.status === "填寫中" ? "👉" : "⏳");
+        return `<div class="queue-item ${statusClass}"><span>${i+1}. ${item.name}</span> <span>${icon} ${item.status}</span></div>`;
+      }).join('');
+    }
+  }
+  init();
+</script>
+</body>
+</html>
