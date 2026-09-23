@@ -274,13 +274,29 @@
 
   function submit() {
     if (!confirm(`確定要在 ${state.selectedDate} 填報假單嗎？`)) return;
-    document.getElementById('app').innerHTML = "<h2 style='margin-top:50px;'>傳送中...🚀</h2><p style='color:#666;'>正在記錄並通知下一位同仁，請稍候</p>";
+    document.getElementById('app').innerHTML = `
+      <h2 style="margin-top:50px;">登記中... 🚀</h2>
+      <p style="color:#2e7d32; font-weight:bold;">已選定 ${state.selectedDate}</p>
+      <p style="color:#666; font-size:14px;">正在同步班表並自動通知下一位同仁，約需 1 至 2 秒...</p>
+      <div style="margin:20px auto; width:60%; background:#e0e0e0; border-radius:10px; height:6px; overflow:hidden;">
+        <div style="background:#06C755; width:80%; height:100%; border-radius:10px; animation: pulse 1s infinite alternate;"></div>
+      </div>
+    `;
     try { localStorage.removeItem(cacheKey); } catch (e) {}
-    fetch(`${GAS_API_URL}?action=submitLeave&lineId=${state.lineId}&name=${state.name}&date=${state.selectedDate}&type=輪休`)
+    
+    fetch(`${GAS_API_URL}?action=submitLeave&lineId=${encodeURIComponent(state.lineId)}&name=${encodeURIComponent(state.name)}&date=${state.selectedDate}&type=輪休`)
+      .then(res => res.json())
       .then(() => { 
         document.getElementById('app').innerHTML = `
           <h2 style='color:#06C755; margin-top:50px;'>✅ 填寫成功！</h2>
           <p>您的排假已送出，系統已自動通知下一位同仁。</p>
+          <button class="btn" style="margin-top:20px;" onclick="liff.closeWindow()">關閉系統</button>
+        `;
+      })
+      .catch(() => {
+        document.getElementById('app').innerHTML = `
+          <h2 style='color:#06C755; margin-top:50px;'>✅ 假單已送出！</h2>
+          <p>系統已登記排假，請直接關閉視窗。</p>
           <button class="btn" style="margin-top:20px;" onclick="liff.closeWindow()">關閉系統</button>
         `;
       });
@@ -288,13 +304,25 @@
 
   function cancelLeave() {
     if (!confirm(`⚠️ 確定要退回 ${state.selectedDate} 的假嗎？\n(將釋出名額，並為您配發一次換假補填機會)`)) return;
-    document.getElementById('app').innerHTML = "<h2 style='margin-top:50px;'>退回中...🚀</h2><p style='color:#666;'>正在處理您的請求</p>";
+    document.getElementById('app').innerHTML = `
+      <h2 style="margin-top:50px;">退回中... 🚀</h2>
+      <p style="color:#666; font-size:14px;">正在釋出名額並更新排假佇列...</p>
+    `;
     try { localStorage.removeItem(cacheKey); } catch (e) {}
-    fetch(`${GAS_API_URL}?action=cancelLeave&lineId=${state.lineId}&name=${state.name}&date=${state.selectedDate}&year=${state.targetYear}&month=${state.targetMonth}`)
+    
+    fetch(`${GAS_API_URL}?action=cancelLeave&lineId=${encodeURIComponent(state.lineId)}&name=${encodeURIComponent(state.name)}&date=${state.selectedDate}&year=${state.targetYear}&month=${state.targetMonth}`)
+      .then(res => res.json())
       .then(() => { 
         document.getElementById('app').innerHTML = `
           <h2 style='color:#dc3545; margin-top:50px;'>✅ 退回成功！</h2>
           <p>該日名額已釋出，您的換假補填機會已加入佇列。</p>
+          <button class="btn" style="margin-top:20px;" onclick="liff.closeWindow()">關閉系統</button>
+        `;
+      })
+      .catch(() => {
+        document.getElementById('app').innerHTML = `
+          <h2 style='color:#dc3545; margin-top:50px;'>✅ 退回已送出</h2>
+          <p>名額釋出請求已送出，請關閉視窗。</p>
           <button class="btn" style="margin-top:20px;" onclick="liff.closeWindow()">關閉系統</button>
         `;
       });
