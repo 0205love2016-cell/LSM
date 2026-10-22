@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>雙福分隊排假系統</title>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js" defer></script>
   <style>
     body { font-family: sans-serif; background: #f0f2f5; padding: 15px; text-align: center; color: #333; margin: 0; }
     .card { background: white; border-radius: 15px; padding: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 500px; margin: auto; }
@@ -53,8 +53,6 @@
   const targetMonth = nextMonthDate.getMonth() + 1;
   const cacheKey = `leave_cache_${targetYear}_${targetMonth}`;
 
-  let latestInitData = null;
-
   let state = {
     lineId: localStorage.getItem('last_user_line_id') || '',
     name: localStorage.getItem('last_user_name') || '',
@@ -78,21 +76,7 @@
   function renderAppSkeleton(syncText = "資料同步中... ⏳", isUpdating = true) {
     const app = document.getElementById('app');
     let html = `<h3>民國 ${state.targetYear - 1911} 年 ${state.targetMonth} 月 輪休表</h3>`;
-    let displayName = state.name ? `<b>${state.name}</b>` : '隊員';
-    let switchBtn = `<a href="javascript:void(0)" onclick="toggleIdentitySelector()" style="font-size:12px; color:#0275d8; text-decoration:underline; margin-left:6px;">[切換/選擇身分]</a>`;
-    html += `<p style="margin:8px 0;">哈囉，${displayName} 👋 ${switchBtn}</p>`;
-    
-    html += `
-      <div id="identitySelector" style="display:none; background:#f0f7ff; border:1px solid #cce5ff; border-radius:8px; padding:12px; margin:10px auto; max-width:460px; text-align:left;">
-        <div style="font-size:13px; color:#004085; font-weight:bold; margin-bottom:4px;">🧑 手動選取您的身分</div>
-        <div style="font-size:11px; color:#666; margin-bottom:8px;">若手機未自動辨識或身分不正確，請從名冊選取您的姓名：</div>
-        <div style="display:flex; gap:8px;">
-          <select id="manualSelectName" style="flex:1; padding:8px; font-size:15px; border-radius:5px; border:1px solid #ccc; background:#fff;"></select>
-          <button class="btn" style="width:auto; padding:8px 15px; margin-top:0; font-size:14px; background:#0275d8;" onclick="confirmManualIdentity()">確認切換</button>
-        </div>
-      </div>
-    `;
-
+    html += `<p>哈囉，${state.name || '隊員'} 👋</p>`;
     html += `<div class="sync-status ${isUpdating ? 'updating' : 'ready'}" id="syncStatusBar">${syncText}</div>`;
     if (!state.sheetFound) html += `<p style="color:red;">⚠️ 找不到分頁: ${state.sheetName}</p>`;
     html += `<div class="legend"><span>🔴 輪休</span><span>🟢 自選</span></div>`;
@@ -124,11 +108,7 @@
     html += `</div>`;
     
     if (!state.isMyTurn && state.statusMessage) {
-      let hintText = '';
-      if (state.statusMessage.includes('瀏覽模式') && !state.name) {
-        hintText = `<div style="font-size:12px; color:#555; margin-top:4px;">💡 若輪到您填假但顯示為瀏覽模式，請點擊上方 <a href="javascript:void(0)" onclick="toggleIdentitySelector()" style="color:#0275d8; text-decoration:underline;">[切換/選擇身分]</a></div>`;
-      }
-      html += `<div style="margin-top:10px;"><p style="color:#e65100; font-size:14px; font-weight:bold; margin:0;" id="statusMsgBox">⌛ ${state.statusMessage}</p>${hintText}</div>`;
+      html += `<p style="color:#e65100; font-size:14px; font-weight:bold; margin-top:10px;" id="statusMsgBox">⌛ ${state.statusMessage}</p>`;
     }
     html += `<div id="actionArea"><button class="btn" disabled>請選擇日期</button></div>`;
     
@@ -187,17 +167,6 @@
   }
 
   /**
-   * 等待 LIFF SDK 載入完成 (防止非同步競態)
-   */
-  async function waitForLiffSdk(maxMs = 3000) {
-    const start = Date.now();
-    while (typeof liff === 'undefined' && (Date.now() - start < maxMs)) {
-      await new Promise(r => setTimeout(r, 100));
-    }
-    return typeof liff !== 'undefined';
-  }
-
-  /**
    * 平行非同步主邏輯：LIFF 驗證與後端 API 請求同時發出
    */
   async function launchFastSystem() {
@@ -213,28 +182,18 @@
       }
     })();
 
-    // 任務 B：LIFF 初始化 (加固等待與防錯)
+    // 任務 B：LIFF 初始化 (非阻塞)
     const liffPromise = (async () => {
       try {
-        const hasSdk = await waitForLiffSdk(3000);
-        if (!hasSdk) {
-          console.warn('LIFF SDK 載入超時，將依賴快取或手動切換身分');
-          return null;
-        }
+        if (typeof liff === 'undefined') return null;
         await liff.init({ liffId: LIFF_ID });
         if (!liff.isLoggedIn()) {
-          if (liff.isInClient && liff.isInClient()) {
-            liff.login();
-            return null;
-          }
+          liff.login();
+          return null;
         }
-        if (liff.isLoggedIn()) {
-          const profile = await liff.getProfile();
-          return profile ? profile.userId : null;
-        }
-        return null;
+        const profile = await liff.getProfile();
+        return profile.userId;
       } catch (e) {
-        console.warn('LIFF 驗證略過:', e);
         return null;
       }
     })();
@@ -243,7 +202,6 @@
     const [initData, freshUserId] = await Promise.all([apiPromise, liffPromise]);
 
     if (initData && !initData.error) {
-      latestInitData = initData;
       if (freshUserId) {
         state.lineId = freshUserId;
         localStorage.setItem('last_user_line_id', freshUserId);
@@ -259,27 +217,25 @@
   }
 
   /**
-   * 套用後端最新資料並平滑更新介面 (支援客戶端身分即時動態映射與雙重校驗)
+   * 套用後端最新資料並平滑更新介面 (支援客戶端身分即時動態映射)
    */
   function applyInitData(initData, activeLineId) {
-    latestInitData = initData;
     const targetId = activeLineId || state.lineId;
-    let matchedName = (targetId && initData.lineIdToName && initData.lineIdToName[targetId]) 
-      ? initData.lineIdToName[targetId] 
-      : (state.name || initData.myName || '');
+    let matchedName = initData.myName || state.name;
 
+    // 若後端有提供對照表，直接在客戶端進行身分映射，完全免去第二次網路請求
+    if (targetId && initData.lineIdToName && initData.lineIdToName[targetId]) {
+      matchedName = initData.lineIdToName[targetId];
+    }
     state.name = matchedName;
     if (state.name) localStorage.setItem('last_user_name', state.name);
 
-    // 客戶端即時計算是否輪到我與狀態訊息 (雙重判定：LINE ID 吻合 或 姓名吻合)
+    // 客戶端即時計算是否輪到我與狀態訊息
     const isInQueue = initData.queueList && initData.queueList.some(item => item.name === matchedName);
-    const isCurrentActive = (initData.currentActiveLineId && targetId && initData.currentActiveLineId === targetId) ||
-                            (initData.currentActiveName && matchedName && initData.currentActiveName === matchedName);
-
     if (initData.allFinished) {
       state.isMyTurn = isInQueue;
       state.statusMessage = isInQueue ? '🎉 自由換假模式：可退回或自選假！' : '👀 瀏覽模式：大家已排假完成。';
-    } else if (isCurrentActive) {
+    } else if (initData.currentActiveLineId && initData.currentActiveLineId === targetId) {
       state.isMyTurn = true;
       state.statusMessage = '👉 輪到您填假了！';
     } else if (initData.currentActiveName) {
@@ -291,7 +247,7 @@
     }
 
     if (!matchedName && targetId) {
-      state.statusMessage = '⚠️ 找不到您的系統 ID，請點擊上方 [切換/選擇身分] 或通知管理員。';
+      state.statusMessage = '⚠️ 找不到您的系統 ID，請通知管理員。';
     }
 
     // 客戶端計算個人已選假單 userBooked
@@ -490,72 +446,6 @@
         alert("⚠️ 連線失敗，請稍後再試！");
         launchFastSystem();
       });
-  }
-
-  function toggleIdentitySelector() {
-    const selDiv = document.getElementById('identitySelector');
-    if (!selDiv) return;
-    const isShowing = selDiv.style.display === 'block';
-    selDiv.style.display = isShowing ? 'none' : 'block';
-    if (!isShowing) {
-      populateManualSelect();
-    }
-  }
-
-  function populateManualSelect() {
-    const selectEl = document.getElementById('manualSelectName');
-    if (!selectEl) return;
-    let names = state.personnelList || [];
-    if (names.length === 0 && latestInitData && latestInitData.personnelList) {
-      names = latestInitData.personnelList;
-    }
-    let validNames = names.filter(n => n && !n.includes('人數') && !n.includes('名額'));
-    let opts = '<option value="">請選擇您的姓名...</option>';
-    validNames.forEach(n => {
-      opts += `<option value="${n}" ${n === state.name ? 'selected' : ''}>${n}</option>`;
-    });
-    selectEl.innerHTML = opts;
-  }
-
-  function confirmManualIdentity() {
-    const selectEl = document.getElementById('manualSelectName');
-    if (!selectEl) return;
-    const selectedName = selectEl.value;
-    if (!selectedName) {
-      alert("⚠️ 請先選擇您的姓名！");
-      return;
-    }
-
-    // 反查對應的 lineId
-    let foundLineId = '';
-    if (latestInitData) {
-      if (latestInitData.lineIdToName) {
-        for (let id in latestInitData.lineIdToName) {
-          if (latestInitData.lineIdToName[id] === selectedName) {
-            foundLineId = id;
-            break;
-          }
-        }
-      }
-      if (!foundLineId && latestInitData.queueList) {
-        const qItem = latestInitData.queueList.find(item => item.name === selectedName);
-        if (qItem && qItem.lineId) {
-          foundLineId = qItem.lineId;
-        }
-      }
-    }
-
-    state.name = selectedName;
-    if (foundLineId) {
-      state.lineId = foundLineId;
-      localStorage.setItem('last_user_line_id', foundLineId);
-    }
-    localStorage.setItem('last_user_name', selectedName);
-
-    if (latestInitData) {
-      applyInitData(latestInitData, foundLineId || state.lineId);
-    }
-    alert(`✅ 已將身分切換為【${selectedName}】！`);
   }
 
   // 啟動平行載入系統
